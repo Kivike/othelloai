@@ -11,6 +11,7 @@ class PeetuRoope(ReversiAlgorithm):
 	visualizeFlag = False
 	bestMove = None
 	sendMove = False
+	tree = None
 	
 	def __init__(self):
 		threading.Thread.__init__(self);
@@ -36,6 +37,9 @@ class PeetuRoope(ReversiAlgorithm):
 
 	def run(self):
 		print "starting algo ... "
+
+		self.createTree()
+
 		self.sendMove = False
 		moves = self.state.getPossibleMoves(self.playerIndex)
 		self.bestMove = moves[0]
@@ -49,5 +53,24 @@ class PeetuRoope(ReversiAlgorithm):
 			pass
 
 		self.controller.doMove(self.bestMove)
+
+	def createTree(self):
+		moves = self.state.getPossibleMoves(self.playerIndex)
+		state = self.state
+		self.recursiveTree(Node(state, moves[0]), state, 0, 2, self.playerIndex)
+
+
+	def recursiveTree(self, node, state, count, depth, playerIndex):
+		count+=1
+		if count >= depth:
+			return;
+
+		moves = state.getPossibleMoves(playerIndex);
+
+		for move in moves:
+			newstate = state.getNewInstance(move.x, move.y, move.player)
+			child = Node(newstate, move)
+			node.addChild(child)
+			self.recursiveTree(child, newstate, count, depth, 1 - playerIndex)
 
 		
