@@ -17,13 +17,14 @@ class PeetuRoope(ReversiAlgorithm):
 		pass
 
 	def requestMove(self, requester):
-		self.sendMove = True
+		pass
 
 	def init(self, game, state, playerIndex, turnLength):
 		print "INITING"
 		self.state = state
 		self.playerIndex = playerIndex
 		self.controller = game
+		self.turnLength = turnLength
 
 
 	@property
@@ -42,7 +43,9 @@ class PeetuRoope(ReversiAlgorithm):
 		for move in moves:
 			print str(move.x) + " " + str(move.y)
 
-		while not self.sendMove:
+		startTime = time.time()
+
+		while self.turnLength - (time.time() - startTime) > 0.1:
 			pass
 
 		self.controller.doMove(self.bestMove)
