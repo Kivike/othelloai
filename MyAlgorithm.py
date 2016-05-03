@@ -23,7 +23,7 @@ class MyAlgorithm(ReversiAlgorithm):
     selectedMove = None
     visualizeFlag = True
     movecount = 1
-
+    game = None
 
     def __init__(self):
         """
@@ -41,6 +41,7 @@ class MyAlgorithm(ReversiAlgorithm):
          self.myIndex = playerIndex
          self.controller = game
          self.initialized = True
+         self.game = game
 
 
     @property
