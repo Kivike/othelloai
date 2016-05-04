@@ -87,9 +87,6 @@ class PeetuRoope(ReversiAlgorithm):
 		print "Making move " + self.bestMove.toString()
 		self.controller.doMove(self.bestMove)
 
-	def isTimeLeft():
-		return self.turnLength - (time.time() - startTime) > 0.1
-
 	# Create tree recursively
 	#
 	# Node parameter should be rootNode. The tree is created by adding all possible moves as child
