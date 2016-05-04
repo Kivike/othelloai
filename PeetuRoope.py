@@ -8,37 +8,51 @@ import time, sys
 import threading
 
 class PeetuRoope(ReversiAlgorithm):
+	# Visualization not implemented because it spams
 	visualizeFlag = False
-	bestMove = None
-	sendMove = False
-	initialState = None
-	tree = None
-	playerIndex = -1
-	moveIndex = 0
-	game = None
 
-	MAX_DEPTH = 4
+	# This is the move that is updated while algorithm searches deeper
+	# bestMove is given when time runs out
+	bestMove = None
+	
+	# Flag to check when algorithms needs to stop
+	running = False
+
+	# The game state when algorithm starts
+	initialState = None
+
+	# 0 or 1
+	playerIndex = -1
+
+	# How deep will algorithm go? Time is usually more limiting
+	MAX_DEPTH = 8
+
+	# Timer to see how long the game takes
+	wholeGameTimer = None
 
 	def __init__(self):
 		threading.Thread.__init__(self);
 		pass
 
 	def requestMove(self, requester):
-		pass
+		self.doBestMove()
+		self.running = False
 
 	def init(self, game, state, playerIndex, turnLength):
 		self.initialState = state
 		self.playerIndex = playerIndex
 		self.controller = game
 		self.turnLength = turnLength
-		self.game = game
+
+		if PeetuRoope.wholeGameTimer == None:
+			PeetuRoope.wholeGameTimer = GameTimer(0).start()
 
 	@property
 	def name(self):
 		return "PeetuRoope"
 
 	def cleanup(self):
-		return
+		print "The game took " + str(PeetuRoope.wholeGameTimer.getTimePassed()) + " seconds"
 
 	def run(self):
 		print "Starting algorithm PeetuRoope, own playerIndex: " + str(self.playerIndex)
@@ -48,44 +62,76 @@ class PeetuRoope(ReversiAlgorithm):
 		while self.initialState == None:
 			time.sleep(30)
 
-		self.sendMove = False
+		self.running = True
+		self.bestMove = None
 
-		print "Possible moves"
-		for move in self.initialState.getPossibleMoves(self.playerIndex):
-			print move.toString()
+		#printPossibleMoves(self.initialState)
 
 		timer = GameTimer(self.turnLength).start()
 
 		print "Current score: " + str(self.initialState.getMarkCount(self.playerIndex)) + "-" + str(self.initialState.getMarkCount(1 - self.playerIndex));
 
-		while timer.isTimeLeft(0.1):
+		lastSearchTime = 0
+
+		# No possible moves, must skip turn
+		if len(self.initialState.getPossibleMoves(self.playerIndex)) == 0:
+			self.running = False
+			self.controller.doMove(None)
+
+		while self.running:
 			print "Searching to depth " + str(depthLimit)
+
+			# Time how long each depth takes
+			searchTimer = GameTimer(self.turnLength).start()
+
 			rootNode = Node(self.initialState, None)
+
 			self.recursiveCreateTree(rootNode, 0, depthLimit, self.playerIndex)
 
 			# If playerIndex is 0, maximize on odd depths
 			# If playerIndex is 1, maximize on even depths
 			maximize = self.playerIndex != depthLimit % 2
-			print "Depth " + str(depthLimit) + " max " + str(maximize)
 
 			self.scoreLeafNodes(rootNode, maximize)
 
 			#rootNode.printtree()
 
-			if rootNode.getOptimalChild() == None:
+			optimalChild = rootNode.getOptimalChild()
+
+			if not self.running:
+				break
+
+			if optimalChild == None:
 				print "optimal child is none"
+				rootNode.printtree
+				self.printPossibleMoves(self.initialState)
 				# Something went wrong when creating the tree...
 			else:
-				self.bestMove = rootNode.getOptimalChild().getMove()
+				self.bestMove = optimalChild.getMove()
 
 			# Gradually increase search depth
 			depthLimit += 1
 
+			lastSearchTime = searchTimer.getTimePassed()
+			print "Search took " + str(lastSearchTime)
+
 			if depthLimit > self.MAX_DEPTH:
 				break
 
-		print "Making move " + self.bestMove.toString()
+		self.doBestMove()
+
+	def printPossibleMoves(self, state):
+		print "Possible moves"
+		for move in state.getPossibleMoves(self.playerIndex):
+			print move.toString()
+
+	def doBestMove(self):
+		if self.bestMove == None:
+			return
+
 		self.controller.doMove(self.bestMove)
+		print "Made move " + self.bestMove.toString()
+		self.bestMove = None
 
 	# Create tree recursively
 	#
@@ -95,7 +141,7 @@ class PeetuRoope(ReversiAlgorithm):
 			return
 		
 		currentDepth += 1
-
+	
 		moves = node.state.getPossibleMoves(playerIndex);
 
 		for move in moves:
@@ -116,6 +162,9 @@ class PeetuRoope(ReversiAlgorithm):
 	# Recursive minmax
 	# Node parameter should be parent of leaf node
 	def minMaxToRoot(self, node, maximize):
+		if node == None:
+			return
+
 		for child in node.children:
 			if node.score == 0:
 				node.score = child.score
@@ -145,3 +194,6 @@ class GameTimer:
 
 	def isTimeLeft(self, howMuchTimeLeft):
 		return self.turnLength - (time.time() - self.startTime) > howMuchTimeLeft
+
+	def getTimePassed(self):
+		return time.time() - self.startTime
