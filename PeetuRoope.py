@@ -24,11 +24,17 @@ class PeetuRoope(ReversiAlgorithm):
 	# 0 or 1
 	playerIndex = -1
 
+	START_DEPTH = 2
 	# How deep will algorithm go? Time is usually more limiting
-	MAX_DEPTH = 8
+	MAX_DEPTH = 10
+
+	currentDepth = 0
 
 	# Timer to see how long the game takes
 	wholeGameTimer = None
+
+	# Used to debug how far we got to search
+	depthsSearched = []
 
 	def __init__(self):
 		threading.Thread.__init__(self);
@@ -54,9 +60,12 @@ class PeetuRoope(ReversiAlgorithm):
 	def cleanup(self):
 		print "The game took " + str(PeetuRoope.wholeGameTimer.getTimePassed()) + " seconds"
 
+		for i in range(0, len(self.depthsSearched)):
+			print str(i) + " " + str(self.depthsSearched[i])
+
 	def run(self):
 		print "Starting algorithm PeetuRoope, own playerIndex: " + str(self.playerIndex)
-		depthLimit = 1;
+		self.currentDepth = 1
 
 		# Run was called too soon sometimes
 		while self.initialState == None:
@@ -79,18 +88,18 @@ class PeetuRoope(ReversiAlgorithm):
 			self.controller.doMove(None)
 
 		while self.running:
-			print "Searching to depth " + str(depthLimit)
+			sys.stdout.write("Searching to depth " + str(self.currentDepth))
 
 			# Time how long each depth takes
 			searchTimer = GameTimer(self.turnLength).start()
 
 			rootNode = Node(self.initialState, None)
 
-			self.recursiveCreateTree(rootNode, 0, depthLimit, self.playerIndex)
+			self.recursiveCreateTree(rootNode, self.START_DEPTH, self.currentDepth, self.playerIndex)
 
 			# If playerIndex is 0, maximize on odd depths
 			# If playerIndex is 1, maximize on even depths
-			maximize = self.playerIndex != depthLimit % 2
+			maximize = self.playerIndex != self.currentDepth % 2
 
 			self.scoreLeafNodes(rootNode, maximize)
 
@@ -107,15 +116,17 @@ class PeetuRoope(ReversiAlgorithm):
 				self.printPossibleMoves(self.initialState)
 				# Something went wrong when creating the tree...
 			else:
+				rootNode = optimalChild
 				self.bestMove = optimalChild.getMove()
 
 			# Gradually increase search depth
-			depthLimit += 1
+			self.currentDepth += 1
 
-			lastSearchTime = searchTimer.getTimePassed()
-			print "Search took " + str(lastSearchTime)
+			lastSearchTime = '%.4f' % searchTimer.getTimePassed()
 
-			if depthLimit > self.MAX_DEPTH:
+			print " duration: " + str(lastSearchTime) + " seconds"
+
+			if self.currentDepth > self.MAX_DEPTH:
 				break
 
 		self.doBestMove()
@@ -132,6 +143,8 @@ class PeetuRoope(ReversiAlgorithm):
 		self.controller.doMove(self.bestMove)
 		print "Made move " + self.bestMove.toString()
 		self.bestMove = None
+
+		self.depthsSearched.append(self.currentDepth)
 
 	# Create tree recursively
 	#
@@ -157,6 +170,21 @@ class PeetuRoope(ReversiAlgorithm):
 				self.scoreLeafNodes(child, maximize)
 		else:
 			node.score = node.state.getMarkCount(self.playerIndex);
+
+			move = node.getMove()
+
+			# Give corner moves extra points
+			if move.x == 0:
+				if move.y == 0 or move.y == 7:
+					node.score += 3
+				else:
+					node.score += 1
+			elif move.x == 7:
+				if move.y == 0 or move.y == 7:
+					node.score += 3
+				else:
+					node.score += 1
+
 			self.minMaxToRoot(node.parent, maximize);
 
 	# Recursive minmax
@@ -165,17 +193,32 @@ class PeetuRoope(ReversiAlgorithm):
 		if node == None:
 			return
 
+		# If this node wouldn't be chosen anyway, discard it
+		discardNode = False
+
 		for child in node.children:
 			if node.score == 0:
 				node.score = child.score
-			elif child.score > node.score:
-				if maximize:
-					node.score = child.score
-			else:
-				if not maximize:
+			elif maximize:
+				if child.score > node.score:
 					node.score = child.score
 
-		if node.parent != None:
+					if node.parent != None and node.parent.score > child.score:			
+						# Parent minimizes, it will not choose this node anyway
+						# so might as well stop here
+						discardNode = True
+						break
+			else:
+				if child.score < node.score:
+					node.score = child.score
+
+					if node.parent != None and node.parent.score < child.score:
+						# Parent maximizes, it will not choose this node anyway
+						# so might as well stop here
+						discardNode = True
+						break
+
+		if node.parent != None and not discardNode:
 			# Continue until we reach root node
 			self.minMaxToRoot(node.parent, not maximize)
 
