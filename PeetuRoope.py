@@ -8,8 +8,7 @@ import time, sys
 import threading
 
 class PeetuRoope(ReversiAlgorithm):
-	# Visualization not implemented because it spams
-	visualizeFlag = False
+	DEBUG_LOG = True
 
 	# This is the move that is updated while algorithm searches deeper
 	# bestMove is given when time runs out
@@ -24,17 +23,21 @@ class PeetuRoope(ReversiAlgorithm):
 	# 0 or 1
 	playerIndex = -1
 
-	START_DEPTH = 2
+	currentTurn = 0
+
+	START_DEPTH = 1
 	# How deep will algorithm go? Time is usually more limiting
 	MAX_DEPTH = 10
 
-	currentDepth = 0
+	currentIterationDepth = 0
 
 	# Timer to see how long the game takes
 	wholeGameTimer = None
 
 	# Used to debug how far we got to search
 	depthsSearched = []
+
+	leafNodes = []
 
 	def __init__(self):
 		threading.Thread.__init__(self);
@@ -50,6 +53,8 @@ class PeetuRoope(ReversiAlgorithm):
 		self.controller = game
 		self.turnLength = turnLength
 
+		PeetuRoope.currentTurn += 1
+
 		if PeetuRoope.wholeGameTimer == None:
 			PeetuRoope.wholeGameTimer = GameTimer(0).start()
 
@@ -58,14 +63,15 @@ class PeetuRoope(ReversiAlgorithm):
 		return "PeetuRoope"
 
 	def cleanup(self):
-		print "The game took " + str(PeetuRoope.wholeGameTimer.getTimePassed()) + " seconds"
+		if self.DEBUG_LOG:
+			print "The game took " + str(PeetuRoope.wholeGameTimer.getTimePassed()) + " seconds"
 
-		for i in range(0, len(self.depthsSearched)):
-			print str(i) + " " + str(self.depthsSearched[i])
+			for i in range(0, len(self.depthsSearched)):
+				print str(i) + " " + str(self.depthsSearched[i])
 
 	def run(self):
 		print "Starting algorithm PeetuRoope, own playerIndex: " + str(self.playerIndex)
-		self.currentDepth = 1
+		self.currentIterationDepth = self.START_DEPTH + 1
 
 		# Run was called too soon sometimes
 		while self.initialState == None:
@@ -73,8 +79,6 @@ class PeetuRoope(ReversiAlgorithm):
 
 		self.running = True
 		self.bestMove = None
-
-		#printPossibleMoves(self.initialState)
 
 		timer = GameTimer(self.turnLength).start()
 
@@ -88,20 +92,25 @@ class PeetuRoope(ReversiAlgorithm):
 			self.controller.doMove(None)
 
 		while self.running:
-			sys.stdout.write("Searching to depth " + str(self.currentDepth))
-
 			# Time how long each depth takes
 			searchTimer = GameTimer(self.turnLength).start()
 
 			rootNode = Node(self.initialState, None)
 
-			self.recursiveCreateTree(rootNode, self.START_DEPTH, self.currentDepth, self.playerIndex)
-
 			# If playerIndex is 0, maximize on odd depths
 			# If playerIndex is 1, maximize on even depths
-			maximize = self.playerIndex != self.currentDepth % 2
+			#maximize = self.playerIndex != self.currentIterationDepth % 2
 
-			self.scoreLeafNodes(rootNode, maximize)
+			##
+			## FASTER
+			##
+			self.minMaxFromRoot(rootNode, self.START_DEPTH, self.currentIterationDepth, self.playerIndex, True)
+
+			##
+			## SLOWER
+			##
+			#self.recursiveCreateTree(rootNode, self.START_DEPTH, self.currentIterationDepth, self.playerIndex)
+			#self.scoreLeafNodes(rootNode, maximize)
 
 			#rootNode.printtree()
 
@@ -120,13 +129,14 @@ class PeetuRoope(ReversiAlgorithm):
 				self.bestMove = optimalChild.getMove()
 
 			# Gradually increase search depth
-			self.currentDepth += 1
+			self.currentIterationDepth += 1
 
 			lastSearchTime = '%.4f' % searchTimer.getTimePassed()
 
-			print " duration: " + str(lastSearchTime) + " seconds"
+			if self.DEBUG_LOG:
+				print "Searched to depth " + str(self.currentIterationDepth) + " in " + str(lastSearchTime) + " seconds"
 
-			if self.currentDepth > self.MAX_DEPTH:
+			if self.currentIterationDepth >= self.MAX_DEPTH:
 				break
 
 		self.doBestMove()
@@ -141,27 +151,33 @@ class PeetuRoope(ReversiAlgorithm):
 			return
 
 		self.controller.doMove(self.bestMove)
+
 		print "Made move " + self.bestMove.toString()
 		self.bestMove = None
 
-		self.depthsSearched.append(self.currentDepth)
+		print "Searched to depth " + str(self.currentIterationDepth) + "."
+		self.depthsSearched.append(self.currentIterationDepth)
 
 	# Create tree recursively
 	#
 	# Node parameter should be rootNode. The tree is created by adding all possible moves as child
-	def recursiveCreateTree(self, node, currentDepth, depthLimit, playerIndex):
-		if currentDepth >= depthLimit:
+	def recursiveCreateTree(self, node, currentIterationDepth, depthLimit, playerIndex):
+		if currentIterationDepth >= depthLimit:
+			self.leafNodes.append(node)
 			return
 		
-		currentDepth += 1
+		currentIterationDepth += 1
 	
 		moves = node.state.getPossibleMoves(playerIndex);
 
-		for move in moves:
-			newstate = node.state.getNewInstance(move.x, move.y, move.player)
-			child = Node(newstate, move)
-			node.addChild(child)
-			self.recursiveCreateTree(child, currentDepth, depthLimit, 1 - playerIndex)
+		if len(moves) == 0:
+			self.leafNodes.append(node)
+		else:
+			for move in moves:
+				newstate = node.state.getNewInstance(move.x, move.y, move.player)
+				child = Node(newstate, move)
+				node.addChild(child)
+				self.recursiveCreateTree(child, currentIterationDepth, depthLimit, 1 - playerIndex)
 
 	# Go to last nodes (leaf nodes) and call minmax to send score upwards the tree
 	def scoreLeafNodes(self, node, maximize):
@@ -169,21 +185,7 @@ class PeetuRoope(ReversiAlgorithm):
 			for child in node.children:
 				self.scoreLeafNodes(child, maximize)
 		else:
-			node.score = node.state.getMarkCount(self.playerIndex);
-
-			move = node.getMove()
-
-			# Give corner moves extra points
-			if move.x == 0:
-				if move.y == 0 or move.y == 7:
-					node.score += 3
-				else:
-					node.score += 1
-			elif move.x == 7:
-				if move.y == 0 or move.y == 7:
-					node.score += 3
-				else:
-					node.score += 1
+			node.score = self.evaluateNodeScore(node)
 
 			self.minMaxToRoot(node.parent, maximize);
 
@@ -202,7 +204,7 @@ class PeetuRoope(ReversiAlgorithm):
 			elif maximize:
 				if child.score > node.score:
 					node.score = child.score
-
+ 
 					if node.parent != None and node.parent.score > child.score:			
 						# Parent minimizes, it will not choose this node anyway
 						# so might as well stop here
@@ -222,6 +224,61 @@ class PeetuRoope(ReversiAlgorithm):
 			# Continue until we reach root node
 			self.minMaxToRoot(node.parent, not maximize)
 
+	# Creates tree starting from root to given depth limit and then
+	# recursively use minmax to score the nodes
+	def minMaxFromRoot(self, node, currentIterationDepth, depthLimit, playerIndex, maximize):
+		if currentIterationDepth > depthLimit:
+			return self.evaluateNodeScore(node)
+
+		if not node.hasChildren():
+			moves = node.state.getPossibleMoves(playerIndex)
+
+			if len(moves) == 0:
+				return self.evaluateNodeScore(node)
+			else:
+				for move in moves:
+					newstate = node.state.getNewInstance(move.x, move.y, move.player)
+					node.addChild(Node(newstate, move))
+
+		currentIterationDepth += 1
+
+		if maximize:
+			node.score = -64
+
+			for child in node.children:
+				child.score = self.minMaxFromRoot(child, currentIterationDepth, depthLimit, 1 - playerIndex, not maximize)
+
+				if child.score > node.score:
+					node.score = child.score
+			return node.score
+		else:
+			node.score = 64
+
+			for child in node.children:
+				child.score = self.minMaxFromRoot(child, currentIterationDepth, depthLimit, 1 - playerIndex, not maximize)
+
+				if child.score < node.score:
+					node.score = child.score
+			return node.score
+
+	def evaluateNodeScore(self, node):
+		score = node.state.getMarkCount(self.playerIndex);
+
+		move = node.getMove()
+
+		# Give corner moves extra points
+		#if move.x == 0:
+			#if move.y == 0 or move.y == 7:
+			#	score += 3
+		#	else:
+			#	score += 1
+		#elif move.x == 7:
+			#if move.y == 0 or move.y == 7:
+			#	score += 3
+		#	else:
+			#	score += 1
+
+		return score
 
 # Own timer class since the game doesn't accept moves made after the signal
 class GameTimer:
