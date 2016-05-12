@@ -1,0 +1,12 @@
+python runCMD.py HarryBotter EstaraBot 1
+python runCMD.py EstaraBot HarryBotter 1
+python runCMD.py HarryBotter SparcPy 1
+python runCMD.py EstaraBot HarryBotter 1
+python runCMD.py HarryBotter Crobot 1
+python runCMD.py Crobot HarryBotter 1
+python runCMD.py HarryBotter HAL 1
+python runCMD.py HAL HarryBotter 1
+python runCMD.py HarryBotter GonaBOT 1
+python runCMD.py GonaBOT HarryBotter 1
+python runCMD.py HarryBotter SavuAlgo 1
+python runCMD.py SavuAlgo HarryBotter 1
