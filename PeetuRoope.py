@@ -8,9 +8,45 @@ import time, sys
 import threading
 import random
 
-# Roope Rajala 2374556
-# Peetu Nuottajarvi
+# Ohello/Reversi AI algorithm
+# Bot uses alpha-beta pruning algorithm with
+# different score evaluation for different parts of game (early, mid, end)
+#
+# Roope Rajala 			2374556
+# Peetu Nuottajarvi 	1234567
 class PeetuRoope(ReversiAlgorithm):
+	####################################################################
+	# FOLLOWING VALUES AFFECT HOW WELL THE BOT PLAYS				   #
+	####################################################################
+
+	# When to switch to stable evaluation
+	STABLE_TURN = 18
+
+	# When to switch to greedy evaluation
+	# Greedy gets to greater depths so make sure MAX_DEPTH is enough
+	GREEDY_TURN = 50
+
+	# http://dhconnelly.github.io/paip-python/docs/paip/othello.html
+	# Used by table evaluation
+	SCORE_WEIGHTS = [
+		[ 120, 	-20,  20,  10,  10,   20, -20,  120],
+		[-20, 	-40,  -5,  -5,  -5,   -5, -40,  -20],
+		[ 20,  	 -5,  15,   3,   3,   15,  -5,   20],
+		[ 10,  	 -5,   3,   3,   3,    3,  -5,   10],
+		[ 10,  	 -5,   3,   3,   3,    3,  -5,   10],
+		[ 20,  	 -5,  15,   3,   3,   15,  -5,   20],
+		[-20, 	-40,  -5,  -5,  -5,   -5, -40,  -20],
+		[ 120, 	-20,  20,  10,  10,   20, -20,   120]
+	]
+
+	# Used be stable evaluation
+	STABILITY_WEIGHT = 115
+
+	MOBILITY_WEIGHT_TABLE = 5
+	MOBILITY_WEIGHT_STABLE = 25
+	#####################################################################
+
+	# Set true for development
 	DEBUG_LOG = True
 
 	# This is the move that is updated while algorithm searches deeper
@@ -23,78 +59,59 @@ class PeetuRoope(ReversiAlgorithm):
 	# The game state when algorithm starts
 	initialState = None
 
-	# 0 or 1
+	# 0 if we start, 1 if opponent starts
 	playerIndex = -1
 
-	currentTurn = 0
+	currentTurn = -1
 
 	START_DEPTH = 1
-	# How deep will algorithm go? Time is usually more limiting
-	MAX_DEPTH = 10
+	# How deep will algorithm go? Time is usually more limiting unless
+	# moves are limited
+	MAX_DEPTH = 20
 
+	# Depth is iteratively increased
 	currentIterationDepth = 0
 
-	# Timer to see how long the game takes
-	gameStartTime = -1
-
-	# 8x8 array
+	# 2D 8x8 array representing the game board
+	# ONLY STABILITY FOR CORNERS TO SAVE TIME
 	# True = stable
+	# False = flippable
 	stableDiscs = []
-
-    # http://dhconnelly.github.io/paip-python/docs/paip/othello.html
-	SCORE_WEIGHTS = [
-	    [ 120, 	-20,  20,  10,  10,   20, -20,  120],
-	    [-20, 	-500,  -5,  -5,  -5,   -5, -500,  -120],
-	    [ 20,  	 -5,  15,   3,   3,   15,  -5,   50],
-	    [ 10,  	 -5,   3,   3,   3,    3,  -5,   10],
-	    [ 10,  	 -5,   3,   3,   3,    3,  -5,   10],
-	    [ 20,  	 -5,  15,   3,   3,   15,  -5,   20],
-	    [-20, 	-500,  -5,  -5,  -5,   -5, -500,  -120],
-	    [ 120, 	-20,  20,  10,  10,   20, -20,   120]
-	]
-
-	STABILITY_WEIGHT = {
-		"stable" 	: 120,
-		"danger" 	: -120,
-		"neutral" 	: 10,
-		"edge"		: 15
-	}
-
-	MOBILITY_WEIGHT = 30
 
 	def __init__(self):
 		threading.Thread.__init__(self);
-		pass
+
+		for x in range(0, 8):
+			PeetuRoope.stableDiscs.append([False for y in range(8)])
 
 	def requestMove(self, requester):
 		self.doBestMove()
 		self.running = False
 
+	# Called when own turn starts
 	def init(self, game, state, playerIndex, turnLength):
 		self.initialState = state
 		self.playerIndex = playerIndex
 		self.controller = game
 		self.turnLength = turnLength
 
-		PeetuRoope.currentTurn += 1
+		# Check if running algo first time
+		if PeetuRoope.currentTurn == -1:
+			PeetuRoope.currentTurn = playerIndex
 
-		if PeetuRoope.gameStartTime == -1:
-			PeetuRoope.gameStartTime  = time.time()
-
-			for x in range(0, 8):
-				PeetuRoope.stableDiscs.append([False for x in range(8)])
+			PeetuRoope.GREEDY_TURN -= turnLength
+		else:
+			PeetuRoope.currentTurn += 2
 
 	@property
 	def name(self):
-		return "PeetuRoope"
+		return "HarryBotter"
 
+	# Called when game ends
 	def cleanup(self):
-		if self.DEBUG_LOG:
-			gameDuration = '%.4f' % (time.time() - PeetuRoope.gameStartTime)
-			print "The game took " + str(gameDuration) + " seconds"
+		pass
 
 	def run(self):
-		print "Starting algorithm PeetuRoope, own playerIndex: " + str(self.playerIndex)
 		self.currentIterationDepth = self.START_DEPTH
 
 		# Run was called too soon sometimes
@@ -104,9 +121,12 @@ class PeetuRoope(ReversiAlgorithm):
 		self.running = True
 		self.bestMove = None
 
-		print "Current score: " + str(self.initialState.getMarkCount(self.playerIndex)) + "-" + str(self.initialState.getMarkCount(1 - self.playerIndex));
+		if PeetuRoope.DEBUG_LOG:
+			# Own score - opponent score
+			print ("Current score: " + str(self.initialState.getMarkCount(self.playerIndex)) +
+			  	"-" + str(self.initialState.getMarkCount(1 - self.playerIndex)));
 
-		possibleMoveCount = len(self.initialState.getPossibleMoves(self.playerIndex))
+		possibleMoveCount = self.initialState.getPossibleMoveCount(self.playerIndex)
 
 		if possibleMoveCount == 0:
 			# No possible moves, must skip turn
@@ -116,6 +136,10 @@ class PeetuRoope(ReversiAlgorithm):
 			# Only one possible move to make
 			self.running = False
 			self.controller.doMove(self.initialState.getPossibleMoves(self.playerIndex)[0])
+
+		if PeetuRoope.currentTurn > PeetuRoope.STABLE_TURN and PeetuRoope.currentTurn < PeetuRoope.GREEDY_TURN:
+			# Only update stable discs when using stable evaluation
+			self.updateStableDiscs()
 
 		while self.running:
 			# Time how long each depth takes
@@ -142,15 +166,36 @@ class PeetuRoope(ReversiAlgorithm):
 			# Gradually increase search depth
 			self.currentIterationDepth += 1
 
-			lastSearchTime = '%.4f' % (time.time() - iterationStart)
-
-			if self.DEBUG_LOG:
+			if PeetuRoope.DEBUG_LOG:
+				lastSearchTime = '%.4f' % (time.time() - iterationStart)
 				print "Searched to depth " + str(self.currentIterationDepth) + " in " + str(lastSearchTime) + " seconds"
 
 			if self.currentIterationDepth >= self.MAX_DEPTH:
 				break
 
 		self.doBestMove()
+
+	# Update unflippable (stable) discs
+	def updateStableDiscs(self):
+		for x in range(0,8):
+			for y in range(0,8):
+				if self.isPositionStable(self.initialState, x, y):
+					PeetuRoope.stableDiscs[x][y] = True
+
+	# Prints 8x8 board where x is stable and o is flippable
+	# Differs from the actual board by rotation, but the board is symmetric
+	def printStableDiscs(self):
+		stableString = ''
+
+		for x in range(0, 8):
+			stableString += "\n"
+			for y in range(0, 8):
+				if PeetuRoope.stableDiscs[x][y]:
+					stableString += 'x'
+				else:
+					stableString += 'o'
+
+		print stableString
 
 	def printPossibleMoves(self, state):
 		print "Possible moves"
@@ -163,8 +208,11 @@ class PeetuRoope(ReversiAlgorithm):
 
 		self.controller.doMove(self.bestMove)
 
-		#self.printPossibleMoves(self.initialState)
-		print "Made move " + self.bestMove.toString()
+		if PeetuRoope.DEBUG_LOG:
+			print "Made move " + self.bestMove.toString()
+
+		# doBestMove is called from two different threads, make sure it is
+		# only called once per turn
 		self.bestMove = None
 
 
@@ -180,7 +228,8 @@ class PeetuRoope(ReversiAlgorithm):
 			if len(moves) == 0:
 				return self.evaluateNodeScore(node)
 			else:
-				#random.shuffle(moves)
+				# Shuffling boosts outcome greatly for some reason
+				random.shuffle(moves)
 
 				for move in moves:
 					newstate = node.state.getNewInstance(move.x, move.y, move.player)
@@ -222,122 +271,120 @@ class PeetuRoope(ReversiAlgorithm):
 			return node.score
 
 	def evaluateNodeScore(self, node):
-		if(self.currentTurn < 5):
-			return self.greedyEvaluate(node)
-		elif(self.currentTurn < 25):
-			return self.weightedEvaluate(node)
+		if(PeetuRoope.currentTurn < PeetuRoope.STABLE_TURN):
+			return self.tableEvaluate(node)
+		elif(PeetuRoope.currentTurn < PeetuRoope.GREEDY_TURN):
+			return self.stabilityEvaluate(node)
 		else:
 			return self.greedyEvaluate(node)
 
-
-	def weightedEvaluate(self, node):
-		score = 0
-		state = node.state
+	# Evaluate score based on existing table
+	# Sacrifices accuracy for speed
+	def tableEvaluate(self, node):
 		move = node.getMove()
-
-		#return state.getMarkCount(move.player)
+		score = 0
 
 		for x in range(0, 8):
 			for y in range(0, 8):
-				mark = state.getMarkAt(x, y)
+				mark = node.state.getMarkAt(x, y)
+
+				if mark == -1:
+					continue
+
+				if mark == self.playerIndex:
+					score += PeetuRoope.SCORE_WEIGHTS[move.x][move.y]
+				else:
+					score -= PeetuRoope.SCORE_WEIGHTS[move.x][move.y]
+
+		return score + self.getMobilityScore(node.state, PeetuRoope.MOBILITY_WEIGHT_TABLE)
+
+	# Calculate score based on move count
+	def getMobilityScore(self, state, weight):
+		return state.getPossibleMoveCount(self.playerIndex) - state.getPossibleMoveCount(1 - self.playerIndex) * weight
+		#return state.getPossibleMoveCount(self.playerIndex)
+
+	# Evaluate score based on stable (unflippable) discs
+	# Sacrifices speed for baccuracy
+	def stabilityEvaluate(self, node):
+		score = 0
+		move = node.getMove()
+
+		for x in range(0, 8):
+			for y in range(0, 8):
+				mark = node.state.getMarkAt(x, y)
 				# Check for empty square
 				if mark == -1:
 					continue
 
-				edge = x == 0 or x == 7 or y == 0 or y == 7
-
 				weight = 0
 
-				stability = self.isPositionStable(node, x, y, edge, mark)
+				stability = self.isPositionStable(node.state, x, y)
 
-				if stability == 1:
-					# Own stable
-					weight = PeetuRoope.STABILITY_WEIGHT["stable"]
-				elif stability == -1:
-					# Opponent stable
-					weight = -PeetuRoope.STABILITY_WEIGHT["danger"]
+				if stability:
+					weight = PeetuRoope.STABILITY_WEIGHT
 				else:
-					# Flippable, seemingly not dangerous
-					if edge:
-						weight = PeetuRoope.STABILITY_WEIGHT["edge"]
-					else:
-						weight = PeetuRoope.STABILITY_WEIGHT["neutral"]
+					weight = PeetuRoope.SCORE_WEIGHTS[x][y]
 
 				if self.playerIndex == mark:
 					score += weight
 				else:
 					score -= weight
 
+		return score + self.getMobilityScore(node.state, PeetuRoope.MOBILITY_WEIGHT_STABLE)
 
-		# Give score based on possible moves for the node
-		#score -= node.state.getPossibleMoveCount(1 - move.player) * PeetuRoope.MOBILITY_WEIGHT
-
-		return score
-
+	# Only values mark count
+	# Good for end game (last ~10 turns)
 	def greedyEvaluate(self, node):
-		return node.state.getMarkCount(self.playerIndex)
+		return node.state.getMarkCount(self.playerIndex) - node.state.getMarkCount(1 - self.playerIndex)
 
-	# Returns 1 if stable
-	# Returns 0 if not stable / neutral / flippable
-	# Returns -1 if dangerous
-	def isPositionStable(self, node, x, y, edge, player):
-		if PeetuRoope.stableDiscs[x][y] == True:
-			return 1
+	# Returns True if stable
+	# Only call this on x,y where a disc exists!
+	def isPositionStable(self, state, markx, marky):
+		if markx != 0 and marky != 0 and markx != 7 and marky != 7:
+			# Stability is only checked for edges to save time
+			return False
 
-		# Only check stability for edges and corners
-		if not edge:
-			return 0
+		if PeetuRoope.stableDiscs[markx][marky] == True:
+			# Already marked as stable
+			return True
 
-		dangerInOneDirection = False
+		# Mark at origin
+		ogMark = state.getMarkAt(markx, marky)
 
-		if x == 0 or x == 7:
-			for y in range(y, 8):
-				mark = node.state.getMarkAt(x, y)
-				if mark != player:
-					if mark != -1:
-						dangerInOneDirection = True
+		if markx == 0 or markx == 7:
+			for y in range(marky, 8):
+				mark = state.getMarkAt(markx, y)
+				if mark != ogMark:
 					break
 
 				if y == 7:
-					PeetuRoope.stableDiscs[x][y] = player
-					return 1
+					# Reached corner, stable
+					return True
 
-			for y in range(y, -1, -1):
-				mark = node.state.getMarkAt(x, y)
-				if mark != player:
-					if mark != -1:
-						dangerInOneDirection = True
+			for y in range(marky, -1, -1):
+				mark = state.getMarkAt(markx, y)
+				if mark != ogMark:
 					break
 
 				if y == 0:
-					PeetuRoope.stableDiscs[x][y] = True
-					return 1
+					# Reached corner, stable
+					return True
 		else:
-			for x in range(x, 8):
-				mark = node.state.getMarkAt(x, y)
-				if mark != player:
-					if mark != -1:
-						dangerInOneDirection = True
+			for x in range(markx, 8):
+				mark = state.getMarkAt(x, marky)
+				if mark != ogMark:
 					break
 
 				if x == 7:
-					PeetuRoope.stableDiscs[x][y] = True
-					return 1
+					# Reached corner, stable
+					return True
 
-			for x in range(x, -1, -1):
-				mark = node.state.getMarkAt(x, y)
-				if mark != player:
-					if mark != -1:
-						dangerInOneDirection = True
+			for x in range(markx, -1, -1):
+				mark = state.getMarkAt(x, marky)
+				if mark != ogMark:
 					break
 
 				if x == 0:
-					PeetuRoope.stableDiscs[x][y] = True
-					return 1
-
-		if dangerInOneDirection:
-			# Opponent could flip this next turn
-			return -1
-		else:
-			# Flippable but not dangerous
-			return 0
+					# Reached corner, stable
+					return True
+		return False
