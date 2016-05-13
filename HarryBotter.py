@@ -8,6 +8,8 @@ import time, sys
 import threading
 import random
 
+import profile
+
 # Ohello/Reversi AI algorithm
 # Bot uses alpha-beta pruning algorithm with
 # different score evaluation for different parts of game (early, mid, end)
@@ -20,19 +22,9 @@ class HarryBotter(ReversiAlgorithm):
 	####################################################################
 	# FOLLOWING VALUES AFFECT HOW WELL THE BOT PLAYS				   #
 	####################################################################
-	# When to switch to table look up evaluation
-	TABLE_TURN = 8
-
-	# When to switch to stable evaluation
-	STABLE_TURN = 18 # 18
-
-	# When to switch to greedy evaluation
-	# Greedy gets to greater depths so make sure MAX_DEPTH is enough
-	GREEDY_TURN = 52 # 50
-
 	# http://dhconnelly.github.io/paip-python/docs/paip/othello.html
 	# Used by table evaluation
-	SCORE_WEIGHTS = [
+	SCORE_WEIGHTS_2 = [
 		[ 120, 	-20,  20,  10,  10,   20, -20,  120],
 		[-20, 	-40,  -5,  -5,  -5,   -5, -40,  -20],
 		[ 20,  	 -5,  15,   3,   3,   15,  -5,   20],
@@ -43,21 +35,34 @@ class HarryBotter(ReversiAlgorithm):
 		[ 120, 	-20,  20,  10,  10,   20, -20,   120]
 	]
 
+	SCORE_WEIGHTS = [
+		[ 100, -1,  5,  2,  2,   5, -1,  100],
+		[-1,  -10,  1,  1,  1,   1, -10,  -1],
+		[ 5,    1,  1,  1,  1,   1,  1,    5],
+		[ 2,    1,  1,  0,  0,   1,  1,    2],
+		[ 2,    1,  1,  0,  0,   1,  1,    2],
+		[ 5,    1,  1,  1,  1,   1,  1,    5],
+		[-1,  -10,  1,  1,  1,   1, -10,  -1],
+		[ 100, -1,  5,  2,  2,   5, -1,  100]
+	]
+
 	# Used by stable evaluation
-	STABILITY_WEIGHT = 115
+	STABILITY_WEIGHT = 120
 
 	# 5 15 - H0 	C01
 	# 5 20 - H01	C01
 
+	MOBILITY_WEIGHT = 50
+
 	# Weight when using table evaluation
-	MOBILITY_WEIGHT_TABLE = 5
+	MOBILITY_WEIGHT_TABLE = 30
 
 	# Weight when checking stable discs
-	MOBILITY_WEIGHT_STABLE = 20
+	MOBILITY_WEIGHT_STABLE = 30
 	#####################################################################
 
-	# Set true for development
-	DEBUG_LOG = False
+	# Log messages for debugging
+	DEBUG_LOG = True
 
 	# This is the move that is updated while algorithm searches deeper
 	# bestMove is given when time runs out
@@ -71,8 +76,11 @@ class HarryBotter(ReversiAlgorithm):
 
 	# 0 if we start, 1 if opponent starts
 	playerIndex = -1
+	opponentIndex = -1
 
 	currentTurn = -1
+
+	instance = None
 
 	START_DEPTH = 0
 	# How deep will algorithm go? Time is usually more limiting unless
@@ -88,6 +96,10 @@ class HarryBotter(ReversiAlgorithm):
 	# False = flippable
 	stableDiscs = []
 
+	BITMAP = [1 << n for n in range(64)]
+
+	evalFunc = None
+
 	def __init__(self):
 		threading.Thread.__init__(self);
 
@@ -102,6 +114,7 @@ class HarryBotter(ReversiAlgorithm):
 	def init(self, game, state, playerIndex, turnLength):
 		self.initialState = state
 		self.playerIndex = playerIndex
+		self.opponentIndex = 1 - playerIndex
 		self.controller = game
 		self.turnLength = turnLength
 
@@ -109,9 +122,32 @@ class HarryBotter(ReversiAlgorithm):
 		if HarryBotter.currentTurn == -1:
 			HarryBotter.currentTurn = playerIndex
 
-			HarryBotter.GREEDY_TURN -= turnLength
+			self.createBitmap()
 		else:
 			HarryBotter.currentTurn += 2
+
+		self.determineEvalFunc(HarryBotter.currentTurn, turnLength)
+
+	def createBitmap(self):
+		return
+		BITMAP = [1 << n for n in range(64)]
+
+	def getBitBoard(self, state):
+		W = 0
+		B = 0
+
+		for x in range(8):
+			for y in range(8):
+				mark = state.getMarkAt(x, y)
+
+				# Check for empty square
+				if mark == -1:
+					continue
+				elif mark == 0:
+					W |= HarryBotter.BITMAP[x * 8 + y]
+				else:
+					B |= HarryBotter.BITMAP[x * 8 + y]
+		return (W, B)
 
 	@property
 	def name(self):
@@ -120,6 +156,18 @@ class HarryBotter(ReversiAlgorithm):
 	# Called when game ends
 	def cleanup(self):
 		pass
+
+	def determineEvalFunc(self, turn, turnLength):
+		if(turn < 7):
+			self.evalFunc = self.greedyEvaluate
+		elif(turn < 16):
+			self.evalFunc = self.tableEvaluate
+		elif(turn < 25):
+			self.evalFunc = self.tableEvaluateMobility
+		elif(turn < 50):
+			self.evalFunc = self.stabilityEvaluate
+		else:
+			self.evalFunc = self.greedyEvaluate
 
 	def run(self):
 		self.currentIterationDepth = self.START_DEPTH
@@ -136,6 +184,8 @@ class HarryBotter(ReversiAlgorithm):
 			print "Current score: %d - %d" % (self.initialState.getMarkCount(self.playerIndex), 
 			  	self.initialState.getMarkCount(1 - self.playerIndex));
 
+			print "Moves: %d" % (self.initialState.getPossibleMoveCount(self.playerIndex))
+
 		possibleMoveCount = self.initialState.getPossibleMoveCount(self.playerIndex)
 
 		if possibleMoveCount == 0:
@@ -147,7 +197,8 @@ class HarryBotter(ReversiAlgorithm):
 			self.running = False
 			self.controller.doMove(self.initialState.getPossibleMoves(self.playerIndex)[0])
 
-		if HarryBotter.currentTurn > HarryBotter.STABLE_TURN and HarryBotter.currentTurn < HarryBotter.GREEDY_TURN:
+		if self.evalFunc == self.stabilityEvaluate:
+		#if HarryBotter.currentTurn > HarryBotter.STABLE_TURN and HarryBotter.currentTurn < HarryBotter.GREEDY_TURN:
 			# Only update stable discs when using stable evaluation
 			self.updateStableDiscs()
 
@@ -187,9 +238,17 @@ class HarryBotter(ReversiAlgorithm):
 
 	# Update unflippable (stable) discs
 	def updateStableDiscs(self):
-		for x in range(0,8):
-			for y in range(0,8):
-				if self.isPositionStable(self.initialState, x, y):
+		(W, B) = self.getBitBoard(self.initialState)
+
+		for x in range(8):
+			for y in range(8):
+				if x % 7 != 0 and y % 7 != 0:
+					continue
+
+				if self.initialState.getMarkAt(x, y) == -1:
+					continue
+
+				if self.isPositionStableBit(self.initialState, W, B, x, y):
 					HarryBotter.stableDiscs[x][y] = True
 
 	# Prints 8x8 board where x is stable and o is flippable
@@ -225,25 +284,23 @@ class HarryBotter(ReversiAlgorithm):
 		# only called once per turn or error is thrown
 		self.bestMove = None
 
-
 	# Creates tree starting from root to given depth limit and then
 	# recursively use minimax with alpha-beta pruning to score the nodes
 	def alphaBetaFromRoot(self, node, currentIterationDepth, depthLimit, alpha, beta, playerIndex, maximize):
 		if currentIterationDepth > depthLimit:
-			return self.evaluateNodeScore(node)
+			return self.evalFunc(node)
 
-		if not node.hasChildren():
-			moves = node.state.getPossibleMoves(playerIndex)
+		moves = node.state.getPossibleMoves(playerIndex)
 
-			if len(moves) == 0:
-				return self.evaluateNodeScore(node)
-			else:
-				# Shuffling boosts outcome greatly for some reason
-				random.shuffle(moves)
+		if len(moves) == 0:
+			return self.evalFunc(node)
+		else:
+			# Shuffling boosts outcome greatly for some reason
+			random.shuffle(moves)
 
-				for move in moves:
-					newstate = node.state.getNewInstance(move.x, move.y, move.player)
-					node.addChild(Node(newstate, move))
+			for move in moves:
+				newstate = node.state.getNewInstance(move.x, move.y, move.player)
+				node.addChild(Node(newstate, move))
 
 		currentIterationDepth += 1
 
@@ -280,16 +337,6 @@ class HarryBotter(ReversiAlgorithm):
 					break
 			return node.score
 
-	def evaluateNodeScore(self, node):
-		if(HarryBotter.currentTurn < HarryBotter.TABLE_TURN):
-			return self.greedyEvaluate(node)
-		elif(HarryBotter.currentTurn < HarryBotter.STABLE_TURN):
-			return self.tableEvaluate(node)
-		elif(HarryBotter.currentTurn < HarryBotter.GREEDY_TURN):
-			return self.stabilityEvaluate(node)
-		else:
-			return self.greedyEvaluate(node)
-
 	# Evaluate score based on existing table
 	# Sacrifices accuracy for speed
 	def tableEvaluate(self, node):
@@ -304,16 +351,39 @@ class HarryBotter(ReversiAlgorithm):
 					continue
 
 				if mark == self.playerIndex:
-					score += HarryBotter.SCORE_WEIGHTS[move.x][move.y]
+					score += HarryBotter.SCORE_WEIGHTS_2[move.x][move.y]
 				else:
-					score -= HarryBotter.SCORE_WEIGHTS[move.x][move.y]
+					score -= HarryBotter.SCORE_WEIGHTS_2[move.x][move.y]
 
-		return score + self.getMobilityScore(node.state, HarryBotter.MOBILITY_WEIGHT_TABLE)
+		if move.player == self.playerIndex:
+			score -= node.state.getPossibleMoveCount(self.opponentIndex) * HarryBotter.MOBILITY_WEIGHT_TABLE
+		else:
+			score -= node.parent.state.getPossibleMoveCount(self.opponentIndex) * HarryBotter.MOBILITY_WEIGHT_TABLE
 
-	# Calculate score based on move count
-	def getMobilityScore(self, state, weight):
-		return (state.getPossibleMoveCount(self.playerIndex) - state.getPossibleMoveCount(1 - self.playerIndex)) * weight
-		#return state.getPossibleMoveCount(self.playerIndex) * weight * 0.5
+ 		return score
+
+ 	def tableEvaluateMobility(self, node):
+ 		score = 0
+		move = node.getMove()
+
+		for x in range(0, 8):
+			for y in range(0, 8):
+				mark = node.state.getMarkAt(x, y)
+
+				if mark == -1:
+					continue
+
+				if mark == self.playerIndex:
+					score += HarryBotter.SCORE_WEIGHTS_2[move.x][move.y]
+				else:
+					score -= HarryBotter.SCORE_WEIGHTS_2[move.x][move.y]
+
+		if move.player == self.playerIndex:
+			score -= node.state.getPossibleMoveCount(self.opponentIndex) * HarryBotter.MOBILITY_WEIGHT
+		else:
+			score -= node.parent.state.getPossibleMoveCount(self.opponentIndex) * HarryBotter.MOBILITY_WEIGHT
+
+		return score
 
 	# Evaluate score based on stable (unflippable) discs
 	# Sacrifices speed for baccuracy
@@ -321,40 +391,45 @@ class HarryBotter(ReversiAlgorithm):
 		score = 0
 		move = node.getMove()
 
+		(W, B) = self.getBitBoard(node.state)
+
 		for x in range(0, 8):
 			for y in range(0, 8):
-				mark = node.state.getMarkAt(x, y)
-				# Check for empty square
-				if mark == -1:
-					continue
-
 				weight = 0
 
-				stability = self.isPositionStable(node.state, x, y)
+				stability = False
+
+				if x % 7 != 0 and y % 7 != 0:
+					stability = self.isPositionStableBit(node.state, W, B, x, y)
 
 				if stability:
 					weight = HarryBotter.STABILITY_WEIGHT
 				else:
-					weight = HarryBotter.SCORE_WEIGHTS[x][y]
+					weight = HarryBotter.SCORE_WEIGHTS_2[x][y]
 
-				if self.playerIndex == mark:
+				if W & HarryBotter.BITMAP[x* 8 + y]:
 					score += weight
 				else:
 					score -= weight
 
-		return score + self.getMobilityScore(node.state, HarryBotter.MOBILITY_WEIGHT_STABLE)
+		if move.player == self.playerIndex:
+			score += node.state.getPossibleMoveCount(self.playerIndex) * HarryBotter.MOBILITY_WEIGHT_STABLE
+		else:
+			score += node.parent.state.getPossibleMoveCount(self.playerIndex) * HarryBotter.MOBILITY_WEIGHT_STABLE
+
+		return score
 
 	# Only values mark count
 	# Good for end game (last ~10 turns)
 	def greedyEvaluate(self, node):
-		return node.state.getMarkCount(self.playerIndex) - node.state.getMarkCount(1 - self.playerIndex)
+		return node.state.getMarkCount(self.playerIndex) - node.state.getMarkCount(self.opponentIndex)
 
 	# Returns True if stable
 	# Only call this on x,y where a disc exists!
 	def isPositionStable(self, state, markx, marky):
-		if markx != 0 and marky != 0 and markx != 7 and marky != 7:
+		#if markx % 7 != 0 and marky % 7 != 0:
 			# Stability is only checked for edges to save time
-			return False
+		#	return False
 
 		if HarryBotter.stableDiscs[markx][marky] == True:
 			# Already marked as stable
@@ -400,3 +475,64 @@ class HarryBotter(ReversiAlgorithm):
 					# Reached corner, stable
 					return True
 		return False
+
+	def isPositionStableBit(self, state, W, B, markx, marky):
+		if markx % 7 != 0 and marky % 7 != 0:
+			# Stability is only checked for edges to save time
+			return False
+
+		if HarryBotter.stableDiscs[markx][marky] == True:
+			# Already marked as stable
+			return True
+
+		ogMark = state.getMarkAt(markx, marky)
+
+		if markx % 7 == 0:
+			row = 0
+
+			for y in range(marky, 8):
+				row |= 1 << y
+
+			if ogMark == 0:
+				if W ^ row == 0:
+					return True
+			else:
+				if B ^ row == 0:
+					return True
+
+			rowInvert = ~row
+
+			if ogMark == 0:
+				if W ^ rowInvert == 0:
+					return True
+			else:
+				if B ^ rowInvert == 0:
+					return True
+		else:
+			row = 0
+
+			for x in range(markx, 8):
+				row |= 1 << x
+
+			if ogMark == 0:
+				if W ^ row == 0:
+					return True
+			else:
+				if B ^ row == 0:
+					return True
+
+			rowInvert = ~row
+
+			if ogMark == 0:
+				if W ^ rowInvert == 0:
+					return True
+			else:
+				if B ^ rowInvert == 0:
+					return True
+
+		return False
+
+
+
+
+
