@@ -1,14 +1,10 @@
 from reversi.Node import Node
 from reversi.Move import Move
 from reversi.GameState import GameState
-from reversi.VisualizeGraph import VisualizeGraph
-from reversi.VisualizeGameTable import VisualizeGameTable
 from reversi.ReversiAlgorithm import ReversiAlgorithm
 import time, sys
 import threading
 import random
-
-import profile
 
 # Ohello/Reversi AI algorithm
 # Bot uses alpha-beta pruning algorithm with
@@ -39,8 +35,9 @@ class HarryBotter(ReversiAlgorithm):
 	STABILITY_WEIGHT = 120
 	#####################################################################
 	# Show log messages
-	DEBUG_LOG = True
+	DEBUG_LOG = False
 
+	# Changed based on turn
 	mobilityWeight = 0
 
 	# This is the move that is updated while algorithm searches deeper
@@ -67,8 +64,11 @@ class HarryBotter(ReversiAlgorithm):
 	# Depth is iteratively increased
 	currentIterationDepth = 0
 
+	# 8x8 array that represents the board
+	# True = stable disc
 	stableDiscs = []
 
+	# What function we are using for node evaluation
 	evalFunc = None
 
 	rootNode = None
@@ -105,28 +105,21 @@ class HarryBotter(ReversiAlgorithm):
 
 	# Called when game ends
 	def cleanup(self):
-		pass
+		return
 
 	# Select evaluation strategy based on turn
 	def determineEvalFunc(self, turn, turnLength):
-		if(turn < 12):
+		if(turn < 19):
 			self.evalFunc = self.tableEvaluate
-			HarryBotter.mobilityWeight = 15
-		elif(turn < 20):
-			self.evalFunc = self.tableEvaluate
-			HarryBotter.mobilityWeight = 45
-		elif(turn < 30):
+			# Good board positions are way more important than mobility
+			HarryBotter.mobilityWeight = 5
+		elif(turn < 52 - (self.turnLength * 0.34)):
 			self.evalFunc = self.stabilityEvaluate
-			HarryBotter.mobilityWeight = 60
-		elif(turn < 40):
-			self.evalFunc = self.stabilityEvaluate
-			HarryBotter.mobilityWeight = 30
-		elif(turn < 52 - (self.turnLength * 0.5)):
-			self.evalFunc = self.stabilityEvaluate
-			HarryBotter.mobilityWeight = 15
+			# Tested with different values, this seems to do well against everything
+			HarryBotter.mobilityWeight = 50
 		else:
 			self.evalFunc = self.greedyEvaluate
-			HarryBotter.mobilityWeight = 1
+			HarryBotter.mobilityWeight = 3
 
 	def run(self):
 		self.currentIterationDepth = self.START_DEPTH
@@ -143,8 +136,6 @@ class HarryBotter(ReversiAlgorithm):
 			print "Current score: %d - %d" % (self.initialState.getMarkCount(self.playerIndex), 
 				self.initialState.getMarkCount(1 - self.playerIndex));
 
-			print "Moves: %d" % (self.initialState.getPossibleMoveCount(self.playerIndex))
-
 		possibleMoveCount = self.initialState.getPossibleMoveCount(self.playerIndex)
 
 		if possibleMoveCount == 0:
@@ -157,15 +148,14 @@ class HarryBotter(ReversiAlgorithm):
 			self.controller.doMove(self.initialState.getPossibleMoves(self.playerIndex)[0])
 
 		if self.evalFunc == self.stabilityEvaluate:
-		#if HarryBotter.currentTurn > HarryBotter.STABLE_TURN and HarryBotter.currentTurn < HarryBotter.GREEDY_TURN:
 			# Only update stable discs when using stable evaluation
 			self.updateStableDiscs()
 
 		self.rootNode = Node(self.initialState, None)
 
 		while self.running:
-			# Time how long each depth takes
-			iterationStart = time.time();
+			if HarryBotter.DEBUG_LOG:
+				iterationStart = time.time();
 			
 			self.alphaBetaFromRoot(self.rootNode, 0, self.currentIterationDepth, -sys.maxint, sys.maxint, self.playerIndex, True)
 
@@ -175,10 +165,10 @@ class HarryBotter(ReversiAlgorithm):
 				break
 
 			if optimalChild == None:
-				print "optimal child is None"
-				self.rootNode.printtree()
-				self.printPossibleMoves(self.initialState)
 				# Something went wrong when creating the tree...
+				if HarryBotter.DEBUG_LOG:
+					print "optimal child is None"
+					self.rootNode.printtree()
 			else:
 				self.bestMove = optimalChild.getMove()
 
@@ -207,26 +197,7 @@ class HarryBotter(ReversiAlgorithm):
 				if self.isPositionStable(self.initialState, x, y):
 					HarryBotter.stableDiscs[x][y] = True
 
-	# Prints 8x8 board where x is stable and o is flippable
-	# Differs from the actual board by rotation, but the board is symmetric
-	def printStableDiscs(self):
-		stableString = ''
-
-		for x in range(0, 8):
-			stableString.join("\n")
-			for y in range(0, 8):
-				if HarryBotter.stableDiscs[x][y]:
-					stableString.join('x')
-				else:
-					stableString.join('o')
-
-		print stableString
-
-	def printPossibleMoves(self, state):
-		print "Possible moves"
-		for move in state.getPossibleMoves(self.playerIndex):
-			print move.toString()
-
+	# Give move currently considered as best to the game controller
 	def doBestMove(self):
 		if self.bestMove == None:
 			return
@@ -259,9 +230,8 @@ class HarryBotter(ReversiAlgorithm):
 					newstate = node.state.getNewInstance(move.x, move.y, move.player)
 					node.addChild(Node(newstate, move))
 		else:
-			if currentIterationDepth < 3:
-				# Sort by score order so that we check most scored nodes first
-				node.children.sort(key = lambda x: x.score, reverse=True)
+			# Sort by score order so that we check most scored nodes first
+			node.children.sort(key = lambda x: x.score, reverse=True)
 
 		currentIterationDepth += 1
 
@@ -275,7 +245,7 @@ class HarryBotter(ReversiAlgorithm):
 				if child.score > alpha:
 					alpha = child.score
 				if beta <= alpha:
-					#self.alphaBetaCuts += 1
+					# CUT
 					break
 			return node.score
 		else:
@@ -288,7 +258,7 @@ class HarryBotter(ReversiAlgorithm):
 				if child.score < beta:
 					beta = child.score
 				if beta <= alpha:
-					#self.alphaBetaCuts += 1
+					# CUT
 					break
 			return node.score
 
@@ -296,48 +266,34 @@ class HarryBotter(ReversiAlgorithm):
 	# Sacrifices accuracy for speed
 	def tableEvaluate(self, node):
 		score = 0
-		ownPotential = 0
-		opponentPotential = 0
-
 		for x in range(8):
 			for y in range(8):
 				mark = node.state.getMarkAt(x, y)
 
 				if mark == -1:
-					#continue
-					(ownP, oppP) = self.getPotentialMoves(node, x, y)
-					ownPotential += ownP
-					opponentPotential += oppP
+					continue
 				elif mark == self.playerIndex:
 					score += HarryBotter.SCORE_WEIGHTS[x][y]
 				else:
 					score -= HarryBotter.SCORE_WEIGHTS[x][y]
 
-		if ownPotential + opponentPotential != 0:
-			potentialScore = (ownPotential - opponentPotential) / (ownPotential + opponentPotential) * HarryBotter.mobilityWeight
-		else:
-			potentialScore = 0
-
-		return score + self.getMobilityScore(node) + potentialScore
+		return score + self.getMobilityScore(node)
 
 	# Evaluate score based on stable (unflippable) discs
-	# Sacrifices speed for baccuracy
+	# Sacrifices speed for accuracy
 	def stabilityEvaluate(self, node):
 		score = 0
-		ownPotential = 0
-		opponentPotential = 0
 
 		for x in range(8):
 			for y in range(8):
 				mark = node.state.getMarkAt(x, y)
 
 				if mark == -1:
-					(ownP, oppP) = self.getPotentialMoves(node, x, y)
-					ownPotential += ownP
-					opponentPotential += oppP
+					continue
 				else:
 					weight = 0
 
+					# Only check stability for edges
 					if x % 7 == 0 or y % 7 == 0:					
 						if self.isPositionStable(node.state, x, y):
 							weight = HarryBotter.STABILITY_WEIGHT
@@ -351,13 +307,9 @@ class HarryBotter(ReversiAlgorithm):
 					else:
 						score += weight
 
-		if ownPotential + opponentPotential != 0:
-			potentialScore = (ownPotential - opponentPotential) / (ownPotential + opponentPotential) * HarryBotter.mobilityWeight
-		else:
-			potentialScore = 0
+		return score + self.getMobilityScore(node)
 
-		return score + self.getMobilityScore(node) + potentialScore
-
+	# Get score based on possible moves for each player
 	def getMobilityScore(self, node):
 		ownMoves = node.state.getPossibleMoveCount(self.playerIndex)
 		opponentMoves = node.state.getPossibleMoveCount(self.opponentIndex)
@@ -369,34 +321,7 @@ class HarryBotter(ReversiAlgorithm):
 
 		return (ownMoves - opponentMoves) / (ownMoves + opponentMoves) * HarryBotter.mobilityWeight
 
-	# Get discs around empty square
-	def getPotentialMoves(self, node, ogx, ogy):
-		ownMoves = 0
-		opponentMoves = 0
-
-		xmin = max(0, ogx - 1)
-		xmax = min(8, ogx + 2)
-		ymin = max(0, ogy - 1)
-		ymax = min(8, ogy + 2)
-
-		for x in range(xmin, xmax):
-			for y in range(ymin, ymax):
-				if HarryBotter.stableDiscs[x][y]:
-					continue
-
-				mark = node.state.getMarkAt(x, y)
-
-				if mark == -1:
-					continue
-
-				if mark == self.playerIndex:
-					opponentMoves += 1
-				else:
-					ownMoves += 1
-
-		return (ownMoves, opponentMoves)
-
-	# Only values mark count
+	# Values pure mark count
 	# Good for end game (last ~10 turns)
 	def greedyEvaluate(self, node):
 		ownMarks = node.state.getMarkCount(self.playerIndex)
@@ -404,14 +329,17 @@ class HarryBotter(ReversiAlgorithm):
 
 		return (ownMarks - opponentMarks) / (ownMarks + opponentMarks) * 100 + self.getMobilityScore(node)
 
-	# Returns True if stable
+	# Returns True if stable at given position
+	# Doesn't check all possible cases (like when row is full which
+	# causes stability even when own disc is next to opponent's)
+	# and only checks edges
 	# Only call this on x,y where a disc exists!
 	def isPositionStable(self, state, markx, marky):
 		if HarryBotter.stableDiscs[markx][marky]:
 			# Already marked as stable
 			return True
 
-		# Mark at origin
+		# Mark at wanted position
 		ogMark = state.getMarkAt(markx, marky)
 
 		if markx % 7 == 0:
@@ -419,24 +347,24 @@ class HarryBotter(ReversiAlgorithm):
 				for y in range(marky, 7):
 					if state.getMarkAt(markx, y) != ogMark:
 						break
-				return True
+				return True # Reached corner
 			if state.getMarkAt(markx, 0) == ogMark:
 				for y in range(marky, 0, -1):
 					if state.getMarkAt(markx, y) != ogMark:
 						break
-				return True
+				return True # Reached corner
 		else:
 			if state.getMarkAt(7, marky) == ogMark:
 				for x in range(markx, 7):
 					if state.getMarkAt(x, marky) != ogMark:
 						break
-				return True
+				return True # Reached corner
 
 			if state.getMarkAt(0, marky) == ogMark:
 				for x in range(markx, 0, -1):
 					if state.getMarkAt(x, marky) != ogMark:
 						break
-				return True
+				return True # Reached corner
 		return False
 
 
